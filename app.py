@@ -19,7 +19,7 @@ capture_mode = st.radio(
     index=0
 )
 
-squares_counted = 4 if "Single image" in capture_mode else 4
+squares_counted = 4
 
 uploaded_file = st.file_uploader("Upload your photo...", type=["jpg", "jpeg", "png"])
 
@@ -96,13 +96,11 @@ if uploaded_file is not None:
 
         canvas.addEventListener('click', function(e) {{
             const rect = canvas.getBoundingClientRect();
-            // Translate phone screen coordinate scale to matching original pixel arrays
             const scaleX = canvas.width / rect.width;
             const scaleY = canvas.height / rect.height;
             const clickX = (e.clientX - rect.left) * scaleX;
             const clickY = (e.clientY - rect.top) * scaleY;
             
-            // Check if user clicked an existing dot to erase it
             let removed = false;
             liveCells = liveCells.filter(pt => {{
                 const dist = Math.sqrt((clickX - pt.x)**2 + (clickY - pt.y)**2);
@@ -118,7 +116,6 @@ if uploaded_file is not None:
                 }});
             }}
             
-            // Otherwise add a brand new coordinate entry point
             if (!removed) {{
                 const selectedTool = document.querySelector('input[name="tool"]:checked').value;
                 if (selectedTool === 'live') {{
@@ -148,12 +145,10 @@ if uploaded_file is not None:
     </script>
     """
 
-    # Embed the high-speed local interactive UI frame
-    # Every time you tap inside this component, it runs at 60 FPS directly inside your phone chip
-    response_data = components.html(custom_canvas_html, height=750, scroller=True)
+    # FIXED: Changed scroller=True to scrolling=True to match Streamlit API parameters
+    response_data = components.html(custom_canvas_html, height=750, scrolling=True)
 
     # --- Read Counts & Generate Metrics ---
-    # Default placeholder arrays to prevent crash before user clicks the screen
     live_count = 0
     dead_count = 0
     
