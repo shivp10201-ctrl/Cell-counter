@@ -6,7 +6,14 @@ from streamlit_image_coordinates import streamlit_image_coordinates
 
 st.set_page_config(page_title="Manual Neubauer Counter", layout="wide")
 st.title("🔬 Interactive Click-to-Count Trypan Blue Calculator")
-st.write("Tap directly on your image to track cells. The app handles all calculations automatically.")
+st.write("Tap directly on your image to track cells. Optimized for smooth, instant placement on mobile.")
+
+# --- Cache the Image to Stop the Re-upload Lag ---
+@st.cache_data(show_spinner=False)
+def load_and_cache_image(file_data):
+    if file_data is None:
+        return None
+    return Image.open(file_data).convert("RGB")
 
 # --- Session State Storage Configuration ---
 if "live_cells" not in st.session_state:
@@ -45,8 +52,11 @@ else:
 
 # --- Interactive Clicking Area ---
 if uploaded_file is not None:
-    # Open image as PIL for clean coordinate drawing
-    img_pil = Image.open(uploaded_file).convert("RGB")
+    # Use cached image so it never vanishes or reloads
+    img_pil_base = load_and_cache_image(uploaded_file)
+    
+    # Create a fresh copy to draw dots on for this rerun frame
+    img_pil = img_pil_base.copy()
     draw = ImageDraw.Draw(img_pil)
     
     # Visual Marker Drawing Loop
@@ -61,27 +71,27 @@ if uploaded_file is not None:
 
     st.write("👇 **Tap or Click the cells inside the image area below:**")
     
-    # Capture the exact tapped coordinate point
+    # Capture the exact clicked coordinate point
     value = streamlit_image_coordinates(img_pil, key="clickable_canvas")
 
     if value is not None:
         clicked_pt = (value["x"], value["y"])
         
-        # Check if user clicked near an existing marker to delete it (Undo feature)
+        # Simple distance checker to see if we clicked near an existing dot to delete it
         removed = False
-        for pt in st.session_state["live_cells"]:
+        for pt in list(st.session_state["live_cells"]):
             if np.sqrt((clicked_pt[0]-pt[0])**2 + (clicked_pt[1]-pt[1])**2) < 15:
                 st.session_state["live_cells"].remove(pt)
                 removed = True
                 break
         if not removed:
-            for pt in st.session_state["dead_cells"]:
+            for pt in list(st.session_state["dead_cells"]):
                 if np.sqrt((clicked_pt[0]-pt[0])**2 + (clicked_pt[1]-pt[1])**2) < 15:
                     st.session_state["dead_cells"].remove(pt)
                     removed = True
                     break
         
-        # Add new point if it wasn't an undo click
+        # If it wasn't an undo click, record the new dot securely
         if not removed:
             if "Mark Live" in tally_type:
                 st.session_state["live_cells"].append(clicked_pt)
@@ -109,6 +119,7 @@ m_col1.metric("🟢 Live Total", f"{live_count} cells")
 m_col2.metric("🔵 Dead Total", f"{dead_count} cells")
 m_col3.metric("📈 Viability %", f"{viability:.1f}%")
 m_col4.metric("🧫 Live Density Concentration", f"{live_density:.2e} cells/mL")
+
 
 
 
