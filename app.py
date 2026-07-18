@@ -1,35 +1,14 @@
 import streamlit as st
-import cv2
-import numpy as np
-from PIL import Image, ImageDraw
-from streamlit_image_coordinates import streamlit_image_coordinates
+import streamlit.components.v1 as components
+import base64
 
-st.set_page_config(page_title="Manual Neubauer Counter", layout="wide")
-st.title("🔬 Interactive Click-to-Count Trypan Blue Calculator")
-st.write("Tap directly on your image to track cells. Optimized for smooth, instant placement on mobile.")
-
-# --- Cache the Image to Stop the Re-upload Lag ---
-@st.cache_data(show_spinner=False)
-def load_and_cache_image(file_data):
-    if file_data is None:
-        return None
-    return Image.open(file_data).convert("RGB")
-
-# --- Session State Storage Configuration ---
-if "live_cells" not in st.session_state:
-    st.session_state["live_cells"] = []
-if "dead_cells" not in st.session_state:
-    st.session_state["dead_cells"] = []
+st.set_page_config(page_title="Instant Neubauer Counter", layout="wide")
+st.title("🔬 Lag-Free Interactive Trypan Blue Counter")
+st.write("Taps draw instantly in your browser with zero network lag. The app calculates lab metrics automatically.")
 
 # --- Side Controls Panel ---
 st.sidebar.header("🔬 Lab Parameters")
 dilution_factor = st.sidebar.number_input("Dilution Factor (e.g., 2 for 1:1 Trypan Blue)", min_value=1.0, value=2.0, step=0.1)
-
-# Clear Button to reset counts
-if st.sidebar.button("🧹 Clear All Marks"):
-    st.session_state["live_cells"] = []
-    st.session_state["dead_cells"] = []
-    st.rerun()
 
 # --- Workflow Capture Method ---
 st.subheader("📸 Choose Your Capture Method")
@@ -40,86 +19,161 @@ capture_mode = st.radio(
     index=0
 )
 
-squares_counted = 4
-uploaded_file = None
+squares_counted = 4 if "Single image" in capture_mode else 4
 
-if "Single image" in capture_mode:
-    uploaded_file = st.file_uploader("Upload your photo...", type=["jpg", "jpeg", "png"])
-else:
-    st.write("### Select a square to label:")
-    square_choice = st.radio("Active Counting Target:", ("Square 1", "Square 2", "Square 3", "Square 4"), horizontal=True)
-    uploaded_file = st.file_uploader(f"Upload photo for {square_choice}...", type=["jpg", "jpeg", "png"], key=square_choice)
+uploaded_file = st.file_uploader("Upload your photo...", type=["jpg", "jpeg", "png"])
 
-# --- Interactive Clicking Area ---
 if uploaded_file is not None:
-    # Use cached image so it never vanishes or reloads
-    img_pil_base = load_and_cache_image(uploaded_file)
-    
-    # Create a fresh copy to draw dots on for this rerun frame
-    img_pil = img_pil_base.copy()
-    draw = ImageDraw.Draw(img_pil)
-    
-    # Visual Marker Drawing Loop
-    for (x, y) in st.session_state["live_cells"]:
-        draw.ellipse([x-8, y-8, x+8, y+8], fill="#00FF00", outline="black") # Bright Green Dot
-    for (x, y) in st.session_state["dead_cells"]:
-        draw.ellipse([x-8, y-8, x+8, y+8], fill="#0000FF", outline="white") # Bright Blue Dot
+    # Convert image to Base64 so JavaScript can render it locally
+    bytes_data = uploaded_file.read()
+    b64_img = base64.b64encode(bytes_data).decode()
+    mime_type = uploaded_file.type
 
-    # Action Toggle Switch
+    # --- High Performance Client-Side Canvas Component ---
+    custom_canvas_html = f"""
+    <div style="font-family: sans-serif; max-width: 100%;">
+        <div style="margin-bottom: 15px; background: #f0f2f6; padding: 10px; border-radius: 8px; display: flex; gap: 15px; align-items: center;">
+            <label style="font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                <input type="radio" name="tool" value="live" checked style="accent-color: #00FF00;"> 🟢 Mark Live Cell
+            </label>
+            <label style="font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                <input type="radio" name="tool" value="dead" style="accent-color: #0000FF;"> 🔵 Mark Dead Cell
+            </label>
+            <button id="clearBtn" style="margin-left: auto; padding: 6px 12px; background: #ff4b4b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">🧹 Clear Canvas</button>
+        </div>
+        
+        <div style="position: relative; display: inline-block; max-width: 100%;">
+            <canvas id="cellCanvas" style="display: block; max-width: 100%; height: auto; border: 1px solid #ccc; cursor: crosshair;"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('cellCanvas');
+        const ctx = canvas.getContext('2d');
+        const clearBtn = document.getElementById('clearBtn');
+        
+        let liveCells = [];
+        let deadCells = [];
+        
+        // Load the image safely into the local browser viewport
+        const img = new Image();
+        img.onload = function() {{
+            canvas.width = img.width;
+            canvas.height = img.height;
+            redraw();
+        }};
+        img.src = "data:{mime_type};base64,{b64_img}";
+
+        function redraw() {{
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            
+            // Instantly draw green dots locally
+            liveCells.forEach(pt => {{
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 10, 0, 2 * Math.PI);
+                ctx.fillStyle = '#00FF00';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#000000';
+                ctx.stroke();
+            }});
+            
+            // Instantly draw blue dots locally
+            deadCells.forEach(pt => {{
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 10, 0, 2 * Math.PI);
+                ctx.fillStyle = '#0000FF';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.stroke();
+            }});
+            
+            // Send the raw data tallies straight back to Streamlit metrics panel
+            sendDataToStreamlit();
+        }}
+
+        canvas.addEventListener('click', function(e) {{
+            const rect = canvas.getBoundingClientRect();
+            // Translate phone screen coordinate scale to matching original pixel arrays
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clickX = (e.clientX - rect.left) * scaleX;
+            const clickY = (e.clientY - rect.top) * scaleY;
+            
+            // Check if user clicked an existing dot to erase it
+            let removed = false;
+            liveCells = liveCells.filter(pt => {{
+                const dist = Math.sqrt((clickX - pt.x)**2 + (clickY - pt.y)**2);
+                if (dist < 20) {{ removed = true; return false; }}
+                return true;
+            }});
+            
+            if (!removed) {{
+                deadCells = deadCells.filter(pt => {{
+                    const dist = Math.sqrt((clickX - pt.x)**2 + (clickY - pt.y)**2);
+                    if (dist < 20) {{ removed = true; return false; }}
+                    return true;
+                }});
+            }}
+            
+            // Otherwise add a brand new coordinate entry point
+            if (!removed) {{
+                const selectedTool = document.querySelector('input[name="tool"]:checked').value;
+                if (selectedTool === 'live') {{
+                    liveCells.push({{ x: clickX, y: clickY }});
+                }} else {{
+                    deadCells.push({{ x: clickX, y: clickY }});
+                }}
+            }}
+            
+            redraw();
+        }});
+
+        clearBtn.addEventListener('click', function() {{
+            liveCells = [];
+            deadCells = [];
+            redraw();
+        }});
+
+        function sendDataToStreamlit() {{
+            const data = {{ live: liveCells.length, dead: deadCells.length }};
+            window.parent.postMessage({{
+                isStreamlitMessage: true,
+                type: "streamlit:setComponentValue",
+                value: data
+            }}, "*");
+        }}
+    </script>
+    """
+
+    # Embed the high-speed local interactive UI frame
+    # Every time you tap inside this component, it runs at 60 FPS directly inside your phone chip
+    response_data = components.html(custom_canvas_html, height=750, scroller=True)
+
+    # --- Read Counts & Generate Metrics ---
+    # Default placeholder arrays to prevent crash before user clicks the screen
+    live_count = 0
+    dead_count = 0
+    
+    if response_data is not None and isinstance(response_data, dict):
+        live_count = response_data.get("live", 0)
+        dead_count = response_data.get("dead", 0)
+
+    combined_total = live_count + dead_count
+
+    if combined_total > 0:
+        live_density = (live_count / squares_counted) * dilution_factor * 10000
+        viability = (live_count / combined_total) * 100
+    else:
+        live_density, viability = 0.0, 0.0
+
+    # --- Final Reporting UI ---
     st.markdown("---")
-    tally_type = st.radio("🖋️ **Tap Mode:** What are you marking right now?", ("🟢 Mark Live Cell", "🔵 Mark Dead Cell"), horizontal=True)
-
-    st.write("👇 **Tap or Click the cells inside the image area below:**")
-    
-    # Capture the exact clicked coordinate point
-    value = streamlit_image_coordinates(img_pil, key="clickable_canvas")
-
-    if value is not None:
-        clicked_pt = (value["x"], value["y"])
-        
-        # Simple distance checker to see if we clicked near an existing dot to delete it
-        removed = False
-        for pt in list(st.session_state["live_cells"]):
-            if np.sqrt((clicked_pt[0]-pt[0])**2 + (clicked_pt[1]-pt[1])**2) < 15:
-                st.session_state["live_cells"].remove(pt)
-                removed = True
-                break
-        if not removed:
-            for pt in list(st.session_state["dead_cells"]):
-                if np.sqrt((clicked_pt[0]-pt[0])**2 + (clicked_pt[1]-pt[1])**2) < 15:
-                    st.session_state["dead_cells"].remove(pt)
-                    removed = True
-                    break
-        
-        # If it wasn't an undo click, record the new dot securely
-        if not removed:
-            if "Mark Live" in tally_type:
-                st.session_state["live_cells"].append(clicked_pt)
-            else:
-                st.session_state["dead_cells"].append(clicked_pt)
-        
-        st.rerun()
-
-# --- Mathematical Operations ---
-live_count = len(st.session_state["live_cells"])
-dead_count = len(st.session_state["dead_cells"])
-combined_total = live_count + dead_count
-
-if combined_total > 0:
-    live_density = (live_count / squares_counted) * dilution_factor * 10000
-    viability = (live_count / combined_total) * 100
-else:
-    live_density, viability = 0.0, 0.0
-
-# --- Reporting UI Panel ---
-st.markdown("---")
-st.subheader("📊 Live Lab Metrics Summary")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-m_col1.metric("🟢 Live Total", f"{live_count} cells")
-m_col2.metric("🔵 Dead Total", f"{dead_count} cells")
-m_col3.metric("📈 Viability %", f"{viability:.1f}%")
-m_col4.metric("🧫 Live Density Concentration", f"{live_density:.2e} cells/mL")
-
-
-
-
+    st.subheader("📊 Live Lab Metrics Summary")
+    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+    m_col1.metric("🟢 Live Total", f"{live_count} cells")
+    m_col2.metric("🔵 Dead Total", f"{dead_count} cells")
+    m_col3.metric("📈 Viability %", f"{viability:.1f}%")
+    m_col4.metric("🧫 Live Density Concentration", f"{live_density:.2e} cells/mL")
