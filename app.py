@@ -1,10 +1,8 @@
 import streamlit as st
-import streamlit.components.v1 as components
-import base64
 
-st.set_page_config(page_title="Instant Neubauer Counter", layout="wide")
-st.title("🔬 Lag-Free Interactive Trypan Blue Counter")
-st.write("Taps draw instantly in your browser with zero network lag. The app calculates lab metrics automatically.")
+st.set_page_config(page_title="Neubauer Lab Counter", layout="wide")
+st.title("🔬 Neubauer Trypan Blue Viability Calculator")
+st.write("A bulletproof manual tally interface. Enter your counts per square below to calculate final metrics instantly.")
 
 # --- Side Controls Panel ---
 st.sidebar.header("🔬 Lab Parameters")
@@ -19,156 +17,62 @@ capture_mode = st.radio(
     index=0
 )
 
+uploaded_file = st.file_uploader("Upload your microscope reference photo here...", type=["jpg", "jpeg", "png"])
+
+# Layout columns to put your image and the tally sheet side-by-side
+col_img, col_tally = st.columns([2, 1])
+
+with col_img:
+    if uploaded_file is not None:
+        st.image(uploaded_file, caption="Your Reference Photo - Use this to look and tally", use_container_width=True)
+    else:
+        st.info("💡 Upload your photo to see it here while counting.")
+
+with col_tally:
+    st.subheader("🧮 Tally Log Sheet")
+    st.write("Double-click cells below to change values:")
+    
+    # Initialize a clean lab log frame natively tracked by Streamlit
+    initial_data = [
+        {"Square": "Square 1 (Top Left)", "Live Cells": 0, "Dead Cells": 0},
+        {"Square": "Square 2 (Top Right)", "Live Cells": 0, "Dead Cells": 0},
+        {"Square": "Square 3 (Bottom Left)", "Live Cells": 0, "Dead Cells": 0},
+        {"Square": "Square 4 (Bottom Right)", "Live Cells": 0, "Dead Cells": 0},
+    ]
+    
+    # Render an interactive spreadsheet that passes data natively to Python
+    edited_df = st.data_editor(
+        initial_data,
+        column_config={
+            "Square": st.column_config.TextColumn("Chamber Square", disabled=True),
+            "Live Cells": st.column_config.NumberColumn("🟢 Live Tally", min_value=0, default=0, step=1),
+            "Dead Cells": st.column_config.NumberColumn("🔵 Dead Tally", min_value=0, default=0, step=1),
+        },
+        disabled=False,
+        hide_index=True,
+        key="lab_spreadsheet"
+    )
+
+# --- Read Data Out of the Live Spreadsheet Matrix ---
+total_live = sum([row["Live Cells"] for row in edited_df])
+total_dead = sum([row["Dead Cells"] for row in edited_df])
+combined_total = total_live + total_dead
 squares_counted = 4
 
-uploaded_file = st.file_uploader("Upload your photo...", type=["jpg", "jpeg", "png"])
+# --- Mathematical Operations & Reporting UI ---
+if combined_total > 0:
+    # Standard Neubauer Formula: (Cells / Squares) * Dilution * 10,000
+    live_density = (total_live / squares_counted) * dilution_factor * 10000
+    viability = (total_live / combined_total) * 100
+else:
+    live_density, viability = 0.0, 0.0
 
-if uploaded_file is not None:
-    # Convert image to Base64 so JavaScript can render it locally
-    bytes_data = uploaded_file.read()
-    b64_img = base64.b64encode(bytes_data).decode()
-    mime_type = uploaded_file.type
+st.markdown("---")
+st.subheader("📊 Combined Final Lab Results")
 
-    # --- High Performance Client-Side Canvas Component ---
-    custom_canvas_html = f"""
-    <div style="font-family: sans-serif; max-width: 100%;">
-        <div style="margin-bottom: 15px; background: #f0f2f6; padding: 10px; border-radius: 8px; display: flex; gap: 15px; align-items: center;">
-            <label style="font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                <input type="radio" name="tool" value="live" checked style="accent-color: #00FF00;"> 🟢 Mark Live Cell
-            </label>
-            <label style="font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                <input type="radio" name="tool" value="dead" style="accent-color: #0000FF;"> 🔵 Mark Dead Cell
-            </label>
-            <button id="clearBtn" style="margin-left: auto; padding: 6px 12px; background: #ff4b4b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">🧹 Clear Canvas</button>
-        </div>
-        
-        <div style="position: relative; display: inline-block; max-width: 100%;">
-            <canvas id="cellCanvas" style="display: block; max-width: 100%; height: auto; border: 1px solid #ccc; cursor: crosshair;"></canvas>
-        </div>
-    </div>
+m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+m_col1.metric("🟢 Total Live Found", f"{total_live} cells")
+m_col2.metric("🔵 Total Dead Found", f"{total_dead} cells")
+m_col3.metric("📈 Viability Rating", f"{viability:.1f}%")
+m_col4.metric("🧫 Live Density Concentration", f"{live_density:.2e} cells/mL")
 
-    <script>
-        const canvas = document.getElementById('cellCanvas');
-        const ctx = canvas.getContext('2d');
-        const clearBtn = document.getElementById('clearBtn');
-        
-        let liveCells = [];
-        let deadCells = [];
-        
-        // Load the image safely into the local browser viewport
-        const img = new Image();
-        img.onload = function() {{
-            canvas.width = img.width;
-            canvas.height = img.height;
-            redraw();
-        }};
-        img.src = "data:{mime_type};base64,{b64_img}";
-
-        function redraw() {{
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0);
-            
-            // Instantly draw green dots locally
-            liveCells.forEach(pt => {{
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 10, 0, 2 * Math.PI);
-                ctx.fillStyle = '#00FF00';
-                ctx.fill();
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#000000';
-                ctx.stroke();
-            }});
-            
-            // Instantly draw blue dots locally
-            deadCells.forEach(pt => {{
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 10, 0, 2 * Math.PI);
-                ctx.fillStyle = '#0000FF';
-                ctx.fill();
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#FFFFFF';
-                ctx.stroke();
-            }});
-            
-            // Send the raw data tallies straight back to Streamlit metrics panel
-            sendDataToStreamlit();
-        }}
-
-        canvas.addEventListener('click', function(e) {{
-            const rect = canvas.getBoundingClientRect();
-            const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
-            const clickX = (e.clientX - rect.left) * scaleX;
-            const clickY = (e.clientY - rect.top) * scaleY;
-            
-            let removed = false;
-            liveCells = liveCells.filter(pt => {{
-                const dist = Math.sqrt((clickX - pt.x)**2 + (clickY - pt.y)**2);
-                if (dist < 20) {{ removed = true; return false; }}
-                return true;
-            }});
-            
-            if (!removed) {{
-                deadCells = deadCells.filter(pt => {{
-                    const dist = Math.sqrt((clickX - pt.x)**2 + (clickY - pt.y)**2);
-                    if (dist < 20) {{ removed = true; return false; }}
-                    return true;
-                }});
-            }}
-            
-            if (!removed) {{
-                const selectedTool = document.querySelector('input[name="tool"]:checked').value;
-                if (selectedTool === 'live') {{
-                    liveCells.push({{ x: clickX, y: clickY }});
-                }} else {{
-                    deadCells.push({{ x: clickX, y: clickY }});
-                }}
-            }}
-            
-            redraw();
-        }});
-
-        clearBtn.addEventListener('click', function() {{
-            liveCells = [];
-            deadCells = [];
-            redraw();
-        }});
-
-        function sendDataToStreamlit() {{
-            const data = {{ live: liveCells.length, dead: deadCells.length }};
-            window.parent.postMessage({{
-                isStreamlitMessage: true,
-                type: "streamlit:setComponentValue",
-                value: data
-            }}, "*");
-        }}
-    </script>
-    """
-
-    # FIXED: Changed scroller=True to scrolling=True to match Streamlit API parameters
-    response_data = components.html(custom_canvas_html, height=750, scrolling=True)
-
-    # --- Read Counts & Generate Metrics ---
-    live_count = 0
-    dead_count = 0
-    
-    if response_data is not None and isinstance(response_data, dict):
-        live_count = response_data.get("live", 0)
-        dead_count = response_data.get("dead", 0)
-
-    combined_total = live_count + dead_count
-
-    if combined_total > 0:
-        live_density = (live_count / squares_counted) * dilution_factor * 10000
-        viability = (live_count / combined_total) * 100
-    else:
-        live_density, viability = 0.0, 0.0
-
-    # --- Final Reporting UI ---
-    st.markdown("---")
-    st.subheader("📊 Live Lab Metrics Summary")
-    m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-    m_col1.metric("🟢 Live Total", f"{live_count} cells")
-    m_col2.metric("🔵 Dead Total", f"{dead_count} cells")
-    m_col3.metric("📈 Viability %", f"{viability:.1f}%")
-    m_col4.metric("🧫 Live Density Concentration", f"{live_density:.2e} cells/mL")
